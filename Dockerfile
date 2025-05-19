@@ -1,24 +1,12 @@
-# Use a base image with Java (e.g., OpenJDK)
-FROM openjdk:17-jdk-slim
-
-# Set the working directory inside the container
+# Stage 1: Build the Spring Boot app with Gradle
+FROM gradle:7.6.0-jdk17 AS build
 WORKDIR /app
+COPY --chown=gradle:gradle . .
+RUN gradle build -x test --no-daemon
 
-# Copy the Gradle wrapper files
-COPY gradlew /app/gradlew
-COPY gradle /app/gradle
-
-# Set the execution bit for the Gradle wrapper AND subsequent COPY
-RUN chmod +x /app/gradlew
-
-# Copy project files
-COPY . /app
-
-# Download dependencies and build the application in one step
-RUN /app/gradlew bootJar --no-daemon
-
-# Expose the port your Spring Boot app runs on (usually 8080)
+# Stage 2: Use a slim runtime image
+FROM eclipse-temurin:17-jdk-jammy
+WORKDIR /app
+COPY --from=build /app/build/libs/*.jar app.jar
 EXPOSE 8080
-
-# Set the command to run the application
-ENTRYPOINT ["java", "-jar", "build/libs/*.jar"]
+CMD ["java", "-jar", "app.jar"]
