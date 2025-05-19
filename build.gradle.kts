@@ -31,9 +31,8 @@ dependencies {
 	annotationProcessor("org.projectlombok:lombok")
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-
         implementation ("org.springframework.boot:spring-boot-starter-data-jpa")
-        implementation ("com.h2database:h2")
+        
 
         implementation("com.squareup.okhttp3:okhttp:4.11.0") // Use the latest version
         implementation("com.google.code.gson:gson:2.10.1") // Use the latest version
