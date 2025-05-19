@@ -8,7 +8,7 @@ WORKDIR /app
 COPY gradlew /app/gradlew
 COPY gradle /app/gradle
 
-# Set the execution bit for the Gradle wrapper
+# Set the execution bit for the Gradle wrapper AND subsequent COPY
 RUN chmod +x /app/gradlew
 
 # Copy project files
