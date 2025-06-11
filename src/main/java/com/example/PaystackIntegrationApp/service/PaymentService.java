@@ -31,7 +31,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Consumer; // Import Consumer
+import java.util.function.Consumer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,13 +48,15 @@ public class PaymentService {
     private final PaymentMethodRepository paymentMethodRepository;
     private final OkHttpClient httpClient;
     private final Gson gson;
-    private final FirebaseDatabase firebaseDatabase;
+    private final FirebaseDatabase firebaseDatabase; // Now injected by Spring
 
-    public PaymentService(PaymentMethodRepository paymentMethodRepository) {
+    // Constructor updated to receive FirebaseDatabase instance
+    public PaymentService(PaymentMethodRepository paymentMethodRepository, FirebaseDatabase firebaseDatabase) {
         this.paymentMethodRepository = paymentMethodRepository;
         this.httpClient = new OkHttpClient();
         this.gson = new Gson();
-        this.firebaseDatabase = FirebaseDatabase.getInstance();
+        this.firebaseDatabase = firebaseDatabase; // Assign the injected instance
+        logger.info("PaymentService constructor initialized with FirebaseDatabase bean.");
     }
 
     public void processPaymentReference(String reference, String userId) throws IOException {
@@ -269,7 +271,6 @@ public class PaymentService {
             return;
         }
 
-        // Make orderFirebaseKey effectively final for use in lambda
         final String finalOrderFirebaseKey = orderFirebaseKey;
 
         findUserIdByOrderKey(finalOrderFirebaseKey, (userIdFound) -> {
@@ -277,7 +278,7 @@ public class PaymentService {
                 DatabaseReference orderStatusRef = firebaseDatabase.getReference("Users")
                         .child(userIdFound)
                         .child("orders")
-                        .child(finalOrderFirebaseKey) // Use finalOrderFirebaseKey here
+                        .child(finalOrderFirebaseKey)
                         .child("status");
 
                 String newOrderStatus;
