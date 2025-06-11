@@ -37,6 +37,13 @@ dependencies {
         implementation("com.squareup.okhttp3:okhttp:4.11.0") // Use the latest version
         implementation("com.google.code.gson:gson:2.10.1") // Use the latest version
         runtimeOnly ("org.postgresql:postgresql")
+
+            // Logging dependencies
+    implementation("ch.qos.logback:logback-classic:1.4.14")
+    implementation("org.slf4j:slf4j-api:2.0.12")
+
+    // Firebase Admin SDK
+    implementation("com.google.firebase:firebase-admin:9.2.0")
 }
 
 tasks.withType<Test> {

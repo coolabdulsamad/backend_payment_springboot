@@ -1,14 +1,11 @@
-/*
- * Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
- * Click nbfs://nbhost/SystemFileSystem/Templates/Classes/Class.java to edit this template
- */
 package com.example.PaystackIntegrationApp.controller;
 
 import com.example.PaystackIntegrationApp.model.ChargeSavedCardRequest;
 import com.example.PaystackIntegrationApp.model.ChargeResponse;
 import com.example.PaystackIntegrationApp.model.PaymentMethod;
-import com.example.PaystackIntegrationApp.model.PaymentInitializationRequest; // Assuming you have this
-import com.example.PaystackIntegrationApp.model.PaymentInitializationResponse; // Assuming you have this
+import com.example.PaystackIntegrationApp.model.PaymentInitializationRequest;
+import com.example.PaystackIntegrationApp.model.PaymentInitializationResponse;
+import com.example.PaystackIntegrationApp.model.PaystackWebhookRequest; // Import the new webhook request model
 import com.example.PaystackIntegrationApp.service.PaymentService;
 import java.io.IOException;
 import java.util.HashMap;
@@ -23,6 +20,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestHeader; // Required for webhook signature verification
 
 @RestController
 @RequestMapping("/api/payment")
@@ -87,7 +85,6 @@ public class PaymentController {
         }
     }
 
-    // New endpoint for charging a saved card
     @PostMapping("/charge-saved-card")
     public ResponseEntity<ChargeResponse> chargeSavedCard(@RequestBody ChargeSavedCardRequest request) {
         try {
@@ -120,7 +117,6 @@ public class PaymentController {
         }
     }
 
-    // New endpoint for initializing a Paystack transaction (if not already present in another controller)
     @PostMapping("/initialize-paystack-transaction")
     public ResponseEntity<PaymentInitializationResponse> initializePaystackTransaction(@RequestBody PaymentInitializationRequest request) {
         try {
@@ -148,6 +144,26 @@ public class PaymentController {
                 null,
                 null
             ), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    // New Webhook Endpoint for Paystack
+    @PostMapping("/paystack-webhook")
+    public ResponseEntity<String> handlePaystackWebhook(
+            @RequestHeader("x-paystack-signature") String signature,
+            @RequestBody PaystackWebhookRequest webhookPayload) {
+        try {
+            // Verify the webhook signature for security
+            if (!paymentService.verifyWebhookSignature(webhookPayload, signature)) {
+                return new ResponseEntity<>("Invalid signature", HttpStatus.BAD_REQUEST);
+            }
+
+            // Process the webhook payload
+            paymentService.handlePaystackWebhook(webhookPayload);
+            return new ResponseEntity<>("Webhook received and processed", HttpStatus.OK);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return new ResponseEntity<>("Error processing webhook: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 }
