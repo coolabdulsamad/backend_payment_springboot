@@ -5,12 +5,12 @@ import com.example.PaystackIntegrationApp.model.ChargeResponse;
 import com.example.PaystackIntegrationApp.model.PaymentMethod;
 import com.example.PaystackIntegrationApp.model.PaymentInitializationRequest;
 import com.example.PaystackIntegrationApp.model.PaymentInitializationResponse;
-import com.example.PaystackIntegrationApp.model.PaystackWebhookRequest; // Import the new webhook request model
+import com.example.PaystackIntegrationApp.model.PaystackWebhookRequest;
 import com.example.PaystackIntegrationApp.service.PaymentService;
-import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.io.IOException; // Import IOException
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.bind.annotation.RequestHeader; // Required for webhook signature verification
+import org.springframework.web.bind.annotation.RequestHeader;
 
 @RestController
 @RequestMapping("/api/payment")
@@ -61,7 +61,7 @@ public class PaymentController {
         try {
             List<PaymentMethod> paymentMethods = paymentService.getPaymentMethodsByUserId(userId);
             if (paymentMethods.isEmpty()) {
-                return new ResponseEntity<>(HttpStatus.OK); // Return 200 OK with an empty list
+                return new ResponseEntity<>(HttpStatus.OK);
             }
             return new ResponseEntity<>(paymentMethods, HttpStatus.OK);
         } catch (Exception e) {
@@ -102,7 +102,9 @@ public class PaymentController {
                 false,
                 "Failed to communicate with Paystack: " + e.getMessage(),
                 "network_error",
-                request.getTransactionReference()),
+                request.getTransactionReference(),
+                null // No specific action required on network error
+                ),
                 HttpStatus.INTERNAL_SERVER_ERROR
             );
         } catch (Exception e) {
@@ -111,7 +113,9 @@ public class PaymentController {
                 false,
                 "An unexpected error occurred: " + e.getMessage(),
                 "internal_error",
-                request.getTransactionReference()),
+                request.getTransactionReference(),
+                null // No specific action required on internal error
+                ),
                 HttpStatus.INTERNAL_SERVER_ERROR
             );
         }
@@ -133,8 +137,8 @@ public class PaymentController {
             return new ResponseEntity<>(new PaymentInitializationResponse(
                 false,
                 "Failed to communicate with Paystack: " + e.getMessage(),
-                null, // No access code on error
-                null // No authorization url on error
+                null,
+                null
             ), HttpStatus.INTERNAL_SERVER_ERROR);
         } catch (Exception e) {
             e.printStackTrace();
@@ -153,17 +157,59 @@ public class PaymentController {
             @RequestHeader("x-paystack-signature") String signature,
             @RequestBody PaystackWebhookRequest webhookPayload) {
         try {
-            // Verify the webhook signature for security
             if (!paymentService.verifyWebhookSignature(webhookPayload, signature)) {
                 return new ResponseEntity<>("Invalid signature", HttpStatus.BAD_REQUEST);
             }
 
-            // Process the webhook payload
             paymentService.handlePaystackWebhook(webhookPayload);
             return new ResponseEntity<>("Webhook received and processed", HttpStatus.OK);
         } catch (Exception e) {
             e.printStackTrace();
             return new ResponseEntity<>("Error processing webhook: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * New endpoint to submit PIN/OTP/Birthday for Paystack transaction challenges.
+     * @param payload A map containing "reference" (transaction reference) and "pin" (the PIN/OTP/Birthday).
+     * @return ChargeResponse indicating the status of the submission.
+     */
+    @PostMapping("/submit-challenge")
+    public ResponseEntity<ChargeResponse> submitChallenge(@RequestBody Map<String, String> payload) {
+        String reference = payload.get("reference");
+        String pin = payload.get("pin"); // Use 'pin' as a generic term for the challenge value
+
+        if (reference == null || reference.isEmpty() || pin == null || pin.isEmpty()) {
+            return new ResponseEntity<>(new ChargeResponse(
+                false,
+                "Invalid request: Missing reference or PIN/Challenge value.",
+                "invalid_input",
+                reference,
+                null
+            ), HttpStatus.BAD_REQUEST);
+        }
+
+        try {
+            ChargeResponse response = paymentService.submitPin(reference, pin); // submitPin is generalized to handle any challenge value
+            return new ResponseEntity<>(response, HttpStatus.OK);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return new ResponseEntity<>(new ChargeResponse(
+                false,
+                "Failed to communicate with Paystack for challenge submission: " + e.getMessage(),
+                "network_error",
+                reference,
+                null
+            ), HttpStatus.INTERNAL_SERVER_ERROR);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return new ResponseEntity<>(new ChargeResponse(
+                false,
+                "An unexpected error occurred during challenge submission: " + e.getMessage(),
+                "internal_error",
+                reference,
+                null
+            ), HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 }

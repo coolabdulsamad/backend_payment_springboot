@@ -48,14 +48,13 @@ public class PaymentService {
     private final PaymentMethodRepository paymentMethodRepository;
     private final OkHttpClient httpClient;
     private final Gson gson;
-    private final FirebaseDatabase firebaseDatabase; // Now injected by Spring
+    private final FirebaseDatabase firebaseDatabase;
 
-    // Constructor updated to receive FirebaseDatabase instance
     public PaymentService(PaymentMethodRepository paymentMethodRepository, FirebaseDatabase firebaseDatabase) {
         this.paymentMethodRepository = paymentMethodRepository;
         this.httpClient = new OkHttpClient();
         this.gson = new Gson();
-        this.firebaseDatabase = firebaseDatabase; // Assign the injected instance
+        this.firebaseDatabase = firebaseDatabase;
         logger.info("PaymentService constructor initialized with FirebaseDatabase bean.");
     }
 
@@ -199,11 +198,18 @@ public class PaymentService {
                 Map<String, Object> dataMap = (Map<String, Object>) errorResponseMap.getOrDefault("data", Collections.emptyMap());
                 String paystackGatewayResponse = (String) dataMap.getOrDefault("gateway_response", "failed");
 
+                // If non-200, still try to parse actionRequired if present
+                String actionRequired = null;
+                if (dataMap.containsKey("status")) {
+                    actionRequired = (String) dataMap.get("status");
+                }
+
                 return new ChargeResponse(
-                    false,
+                    false, // Consider this initial attempt as not successful from 200 perspective
                     "Failed to charge saved card: " + response.code() + " - " + paystackMessage,
                     paystackGatewayResponse,
-                    transactionReference
+                    transactionReference,
+                    actionRequired // Pass through actionRequired even on error
                 );
             }
 
@@ -216,6 +222,7 @@ public class PaymentService {
 
             String gatewayResponse = "unknown";
             String receivedReference = transactionReference;
+            String actionRequired = null; // Initialize actionRequired here
 
             if (data != null) {
                 if (data.containsKey("gateway_response")) {
@@ -224,11 +231,89 @@ public class PaymentService {
                 if (data.containsKey("reference")) {
                     receivedReference = (String) data.get("reference");
                 }
+                // Check for actionRequired status from Paystack's 'data.status'
+                if (data.containsKey("status")) {
+                    actionRequired = (String) data.get("status");
+                }
             }
-            logger.info("Charge saved card response. Status: {}, Message: {}, Gateway Response: {}", status, message, gatewayResponse);
-            return new ChargeResponse(status, message, gatewayResponse, receivedReference);
+            logger.info("Charge saved card response. Status: {}, Message: {}, Gateway Response: {}, Action Required: {}", status, message, gatewayResponse, actionRequired);
+            // Pass the actionRequired to the ChargeResponse constructor
+            return new ChargeResponse(status, message, gatewayResponse, receivedReference, actionRequired);
         }
     }
+
+    /**
+     * Submits a PIN/OTP/Birthday to Paystack for a transaction requiring further authentication.
+     * @param transactionReference The reference of the transaction.
+     * @param pin The PIN/OTP/Birthday provided by the user.
+     * @return ChargeResponse indicating the status of the submission.
+     * @throws IOException If there's a network error or an issue communicating with Paystack.
+     */
+    public ChargeResponse submitPin(String transactionReference, String pin) throws IOException {
+        String url = "https://api.paystack.co/charge/submit_pin"; // Or /charge/submit_otp, /charge/submit_birthday based on challenge
+
+        Map<String, String> bodyMap = new HashMap<>();
+        bodyMap.put("pin", pin);
+        bodyMap.put("reference", transactionReference);
+
+        RequestBody body = RequestBody.create(MediaType.parse("application/json"), gson.toJson(bodyMap));
+
+        Request request = new Request.Builder()
+                .url(url)
+                .header("Authorization", "Bearer " + paystackSecretKey)
+                .post(body)
+                .build();
+
+        logger.info("Attempting to submit PIN for transaction: {}", transactionReference);
+
+        try (Response response = httpClient.newCall(request).execute()) {
+            String responseBodyString = response.body() != null ? response.body().string() : "No response body";
+            logger.info("Paystack /charge/submit_pin raw response: {}", responseBodyString);
+
+            if (!response.isSuccessful()) {
+                logger.error("Failed to submit PIN to Paystack: {} - {}", response.code(), responseBodyString);
+                Map<String, Object> errorResponseMap = gson.fromJson(responseBodyString, new TypeToken<Map<String, Object>>() {}.getType());
+                String paystackMessage = (String) errorResponseMap.getOrDefault("message", "Unknown Paystack error during PIN submission");
+                Map<String, Object> dataMap = (Map<String, Object>) errorResponseMap.getOrDefault("data", Collections.emptyMap());
+                String paystackGatewayResponse = (String) dataMap.getOrDefault("gateway_response", "failed_pin_submission");
+                String actionRequired = (String) dataMap.get("status"); // May indicate next action if needed
+
+                return new ChargeResponse(
+                    false,
+                    "PIN submission failed: " + paystackMessage,
+                    paystackGatewayResponse,
+                    transactionReference,
+                    actionRequired
+                );
+            }
+
+            Type type = new TypeToken<Map<String, Object>>() {}.getType();
+            Map<String, Object> responseMap = gson.fromJson(responseBodyString, type);
+
+            boolean status = (boolean) responseMap.get("status");
+            String message = (String) responseMap.get("message");
+            Map<String, Object> data = (Map<String, Object>) responseMap.get("data");
+
+            String gatewayResponse = "unknown";
+            String receivedReference = transactionReference;
+            String actionRequired = null;
+
+            if (data != null) {
+                if (data.containsKey("gateway_response")) {
+                    gatewayResponse = (String) data.get("gateway_response");
+                }
+                if (data.containsKey("reference")) {
+                    receivedReference = (String) data.get("reference");
+                }
+                if (data.containsKey("status")) {
+                    actionRequired = (String) data.get("status");
+                }
+            }
+            logger.info("PIN submission response. Status: {}, Message: {}, Gateway Response: {}, Action Required: {}", status, message, gatewayResponse, actionRequired);
+            return new ChargeResponse(status, message, gatewayResponse, receivedReference, actionRequired);
+        }
+    }
+
 
     public boolean verifyWebhookSignature(PaystackWebhookRequest webhookPayload, String signature) {
         try {

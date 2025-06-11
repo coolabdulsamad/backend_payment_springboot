@@ -1,13 +1,23 @@
-/*
- * Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
- * Click nbfs://nbhost/SystemFileSystem/Templates/Classes/Class.java to edit this template
- */
-package com.example.PaystackIntegrationApp.model;
+ package com.example.PaystackIntegrationApp.model;
 
-/**
- *
- * @author coola
- */
-public class SubmitPinRequest {
-    
-}
+ public class SubmitPinRequest {
+    private String reference;
+    private String pin;
+
+    // Getters and Setters
+    public String getReference() {
+        return reference;
+    }
+
+    public void setReference(String reference) {
+        this.reference = reference;
+    }
+
+    public String getPin() {
+        return pin;
+    }
+
+    public void setPin(String pin) {
+        this.pin = pin;
+    }
+ }

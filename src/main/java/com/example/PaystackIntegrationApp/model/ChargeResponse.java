@@ -1,19 +1,12 @@
-/*
- * Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
- * Click nbfs://nbhost/SystemFileSystem/Templates/Classes/Class.java to edit this template
- */
 package com.example.PaystackIntegrationApp.model;
 
-/**
- * Model for the response body from the backend after a saved card charge attempt.
- */
 public class ChargeResponse {
     private boolean status;
     private String message;
-    private String gatewayResponse; // e.g., "success", "failed", "reversed"
+    private String gatewayResponse;
     private String transactionReference;
+    private String actionRequired; // New field to indicate if further action (like PIN) is needed
 
-    // Constructors
     public ChargeResponse() {
     }
 
@@ -22,48 +15,56 @@ public class ChargeResponse {
         this.message = message;
         this.gatewayResponse = gatewayResponse;
         this.transactionReference = transactionReference;
+        this.actionRequired = null; // Default to null
     }
 
-    // Getters and Setters
+    public ChargeResponse(boolean status, String message, String gatewayResponse, String transactionReference, String actionRequired) {
+        this.status = status;
+        this.message = message;
+        this.gatewayResponse = gatewayResponse;
+        this.transactionReference = transactionReference;
+        this.actionRequired = actionRequired;
+    }
+
+    // Getters
     public boolean isStatus() {
         return status;
-    }
-
-    public void setStatus(boolean status) {
-        this.status = status;
     }
 
     public String getMessage() {
         return message;
     }
 
-    public void setMessage(String message) {
-        this.message = message;
-    }
-
     public String getGatewayResponse() {
         return gatewayResponse;
-    }
-
-    public void setGatewayResponse(String gatewayResponse) {
-        this.gatewayResponse = gatewayResponse;
     }
 
     public String getTransactionReference() {
         return transactionReference;
     }
 
+    public String getActionRequired() { // New getter
+        return actionRequired;
+    }
+
+    // Setters
+    public void setStatus(boolean status) {
+        this.status = status;
+    }
+
+    public void setMessage(String message) {
+        this.message = message;
+    }
+
+    public void setGatewayResponse(String gatewayResponse) {
+        this.gatewayResponse = gatewayResponse;
+    }
+
     public void setTransactionReference(String transactionReference) {
         this.transactionReference = transactionReference;
     }
 
-    @Override
-    public String toString() {
-        return "ChargeResponse{" +
-               "status=" + status +
-               ", message='" + message + '\'' +
-               ", gatewayResponse='" + gatewayResponse + '\'' +
-               ", transactionReference='" + transactionReference + '\'' +
-               '}';
+    public void setActionRequired(String actionRequired) { // New setter
+        this.actionRequired = actionRequired;
     }
 }
