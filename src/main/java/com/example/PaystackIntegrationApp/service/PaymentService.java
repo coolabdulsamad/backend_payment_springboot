@@ -44,7 +44,6 @@ public class PaymentService {
 
     private static final Logger logger = LoggerFactory.getLogger(PaymentService.class);
 
-    @Value("${paystack.secretKey}")
     private String paystackSecretKey; // This is your main Paystack Secret Key (sk_live_...)
 
     private final PaymentMethodRepository paymentMethodRepository;
@@ -144,7 +143,11 @@ public class PaymentService {
         bodyMap.put("callback_url", callbackUrl);
         if (metadata != null && !metadata.isEmpty()) {
             bodyMap.put("metadata", metadata);
+        } else {
+            // Ensure metadata is always an empty JSON object if no specific metadata is provided
+            bodyMap.put("metadata", new HashMap<>());
         }
+
 
         RequestBody body = RequestBody.create(MediaType.parse("application/json"), gson.toJson(bodyMap));
 
@@ -187,17 +190,15 @@ public class PaymentService {
         bodyMap.put("reference", transactionReference);
         bodyMap.put("authorization_code", authorizationCode);
 
-        // Ensure orderFirebaseKey is passed as metadata map, not null or empty
+        // --- ENFORCING METADATA AS A MAP START ---
+        Map<String, String> metadataToSend = new HashMap<>();
         if (orderFirebaseKey != null && !orderFirebaseKey.isEmpty()) {
-            Map<String, String> metadata = new HashMap<>();
-            metadata.put("order_firebase_key", orderFirebaseKey);
-            bodyMap.put("metadata", metadata);
+            metadataToSend.put("order_firebase_key", orderFirebaseKey);
         } else {
-            // If orderFirebaseKey is null or empty, Paystack might default metadata to 0 or an empty object.
-            // Explicitly setting it to an empty map ensures it's always a JSON object in the request.
-            logger.warn("orderFirebaseKey is null or empty for transaction {}. Sending empty metadata map.", transactionReference);
-            bodyMap.put("metadata", new HashMap<>());
+            logger.warn("orderFirebaseKey is null or empty for transaction {}. No 'order_firebase_key' will be sent in metadata.", transactionReference);
         }
+        bodyMap.put("metadata", metadataToSend); // Always send a Map, even if empty
+        // --- ENFORCING METADATA AS A MAP END ---
 
 
         RequestBody body = RequestBody.create(MediaType.parse("application/json"), gson.toJson(bodyMap));
