@@ -27,7 +27,6 @@ import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
-// Removed Base64 import as we are no longer using it for webhook verification
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -188,9 +187,18 @@ public class PaymentService {
         bodyMap.put("reference", transactionReference);
         bodyMap.put("authorization_code", authorizationCode);
 
-        Map<String, String> metadata = new HashMap<>();
-        metadata.put("order_firebase_key", orderFirebaseKey);
-        bodyMap.put("metadata", metadata);
+        // Ensure orderFirebaseKey is passed as metadata map, not null or empty
+        if (orderFirebaseKey != null && !orderFirebaseKey.isEmpty()) {
+            Map<String, String> metadata = new HashMap<>();
+            metadata.put("order_firebase_key", orderFirebaseKey);
+            bodyMap.put("metadata", metadata);
+        } else {
+            // If orderFirebaseKey is null or empty, Paystack might default metadata to 0 or an empty object.
+            // Explicitly setting it to an empty map ensures it's always a JSON object in the request.
+            logger.warn("orderFirebaseKey is null or empty for transaction {}. Sending empty metadata map.", transactionReference);
+            bodyMap.put("metadata", new HashMap<>());
+        }
+
 
         RequestBody body = RequestBody.create(MediaType.parse("application/json"), gson.toJson(bodyMap));
 
@@ -364,7 +372,7 @@ public class PaymentService {
             // Paystack sends the hex signature as lowercase, but comparing case-insensitively is robust.
             if (!calculatedSignature.equalsIgnoreCase(signature)) {
                 logger.error("WEBHOOK SIGNATURE MISMATCH! Calculated vs. Received. This is critical.");
-                logger.error("Raw Payload: {}", rawPayload);
+                logger.error("Raw Payload: {}", rawPayload); // Log the raw payload for inspection
                 return false;
             }
             logger.info("Webhook signature verified successfully.");
@@ -376,37 +384,37 @@ public class PaymentService {
         }
     }
 
-//    // In PaymentService.java, replace your existing handlePaystackWebhook method with this:
-
     public void handlePaystackWebhook(PaystackWebhookRequest webhookPayload) {
         String event = webhookPayload.event;
-        Map<String, Object> data = webhookPayload.data;
-        String transactionReference = (String) data.get("reference");
-        String statusFromWebhook = (String) data.get("status"); // e.g., "success"
+        PaystackWebhookRequest.Data data = webhookPayload.data; // Use the Data object directly
 
-        Map<String, Object> customerData = (Map<String, Object>) data.get("customer");
-        String customerEmail = (customerData != null) ? (String) customerData.get("email") : "unknown@example.com";
+        String transactionReference = data.reference;
+        String statusFromWebhook = data.status; // e.g., "success"
+
+        String customerEmail = (data.customer != null) ? data.customer.email : "unknown@example.com";
 
         String orderFirebaseKey = null;
 
-        // --- FIX STARTS HERE ---
-        Object metadataObj = data.get("metadata"); // Get as Object first
+        // --- IMPROVED METADATA HANDLING START ---
+        Object metadataObj = data.metadata; // Get as Object first
 
         if (metadataObj instanceof Map) { // Check if it's actually a Map
             Map<String, Object> metadata = (Map<String, Object>) metadataObj; // Safely cast
-            if (metadata != null) { // Check if the map itself is not null (though instanceof already implies it)
+            if (metadata != null) {
                 orderFirebaseKey = (String) metadata.get("order_firebase_key");
             }
         } else if (metadataObj != null) {
             // Log if metadata is not a Map, but not null (e.g., it's a Double, String, etc.)
-            logger.warn("Webhook 'metadata' field is not a Map. Actual type: {}. Value: {}", metadataObj.getClass().getName(), metadataObj);
+            logger.warn("Webhook 'metadata' field is not a Map. Actual type: {}. Value: {}. Cannot extract order_firebase_key.",
+                        metadataObj.getClass().getName(),
+                        metadataObj);
         }
-        // --- FIX ENDS HERE ---
+        // --- IMPROVED METADATA HANDLING END ---
 
         logger.info("Processing Paystack webhook (parsed): Event={}, Reference={}, Status={}, OrderFirebaseKey={}, CustomerEmail={}", event, transactionReference, statusFromWebhook, orderFirebaseKey, customerEmail);
 
         if (orderFirebaseKey == null) {
-            logger.warn("Webhook received without valid 'order_firebase_key' in metadata or metadata was not a Map. Cannot update Firebase order. Reference: {}", transactionReference);
+            logger.warn("Webhook received without valid 'order_firebase_key'. Cannot update Firebase order. Reference: {}", transactionReference);
             return;
         }
 
