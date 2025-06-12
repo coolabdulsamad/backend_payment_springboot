@@ -32,7 +32,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Formatter; // Added for hex encoding
+import java.util.Formatter;
 import java.util.function.Consumer;
 
 import org.slf4j.Logger;
@@ -59,13 +59,10 @@ public class PaymentService {
         logger.info("PaymentService constructor initialized with FirebaseDatabase bean.");
     }
 
-    // This method ensures the secret key is trimmed after injection.
-    // This is good practice to remove accidental whitespace.
     @Value("${paystack.secretKey}")
     public void setPaystackSecretKey(String paystackSecretKey) {
         this.paystackSecretKey = paystackSecretKey.trim();
         logger.info("Paystack Secret Key loaded and trimmed. Length: {}", this.paystackSecretKey.length());
-        // Temporarily keep this debug line to confirm the key is correctly loaded and trimmed
         logger.info("DEBUG: Paystack Secret Key being used (first 5 chars after trim): {}", this.paystackSecretKey.substring(0, Math.min(this.paystackSecretKey.length(), 5)));
         // REMOVE the above DEBUG line in production code for security reasons.
     }
@@ -109,7 +106,7 @@ public class PaymentService {
 
         Request request = new Request.Builder()
                 .url(url)
-                .header("Authorization", "Bearer " + paystackSecretKey) // Use paystackSecretKey for API calls
+                .header("Authorization", "Bearer " + paystackSecretKey)
                 .build();
 
         try (Response response = httpClient.newCall(request).execute()) {
@@ -144,7 +141,6 @@ public class PaymentService {
         if (metadata != null && !metadata.isEmpty()) {
             bodyMap.put("metadata", metadata);
         } else {
-            // Ensure metadata is always an empty JSON object if no specific metadata is provided
             bodyMap.put("metadata", new HashMap<>());
         }
 
@@ -153,7 +149,7 @@ public class PaymentService {
 
         Request request = new Request.Builder()
                 .url(url)
-                .header("Authorization", "Bearer " + paystackSecretKey) // Use paystackSecretKey for API calls
+                .header("Authorization", "Bearer " + paystackSecretKey)
                 .post(body)
                 .build();
 
@@ -190,22 +186,20 @@ public class PaymentService {
         bodyMap.put("reference", transactionReference);
         bodyMap.put("authorization_code", authorizationCode);
 
-        // --- ENFORCING METADATA AS A MAP START ---
         Map<String, String> metadataToSend = new HashMap<>();
         if (orderFirebaseKey != null && !orderFirebaseKey.isEmpty()) {
             metadataToSend.put("order_firebase_key", orderFirebaseKey);
         } else {
             logger.warn("orderFirebaseKey is null or empty for transaction {}. No 'order_firebase_key' will be sent in metadata.", transactionReference);
         }
-        bodyMap.put("metadata", metadataToSend); // Always send a Map, even if empty
-        // --- ENFORCING METADATA AS A MAP END ---
+        bodyMap.put("metadata", metadataToSend);
 
 
         RequestBody body = RequestBody.create(MediaType.parse("application/json"), gson.toJson(bodyMap));
 
         Request request = new Request.Builder()
                 .url(url)
-                .header("Authorization", "Bearer " + paystackSecretKey) // Use paystackSecretKey for API calls
+                .header("Authorization", "Bearer " + paystackSecretKey)
                 .post(body)
                 .build();
 
@@ -273,7 +267,7 @@ public class PaymentService {
 
         Request request = new Request.Builder()
                 .url(url)
-                .header("Authorization", "Bearer " + paystackSecretKey) // Use paystackSecretKey for API calls
+                .header("Authorization", "Bearer " + paystackSecretKey)
                 .post(body)
                 .build();
 
@@ -345,35 +339,30 @@ public class PaymentService {
      */
     public boolean verifyWebhookSignature(String rawPayload, String signature) {
         try {
-            // This debug log shows the key being used. You should remove this in production.
             logger.info("DEBUG: Paystack Secret Key for webhook verification. Length: {}, Trimmed: {}. First 5 chars: {}",
                         paystackSecretKey.length(),
                         paystackSecretKey.equals(paystackSecretKey.trim()),
                         paystackSecretKey.substring(0, Math.min(paystackSecretKey.length(), 5)));
-            // REMOVE the above DEBUG line once this is confirmed working.
 
             Mac sha512_HMAC = Mac.getInstance("HmacSHA512");
-            // Use the already trimmed paystackSecretKey (which is your main secret key)
             SecretKeySpec secretKeySpec = new SecretKeySpec(paystackSecretKey.getBytes(StandardCharsets.UTF_8), "HmacSHA512");
             sha512_HMAC.init(secretKeySpec);
             byte[] hash = sha512_HMAC.doFinal(rawPayload.getBytes(StandardCharsets.UTF_8));
 
-            // *** CRITICAL FIX: Convert the byte array to a HEXADECIMAL string ***
             StringBuilder hexString = new StringBuilder();
             try (Formatter formatter = new Formatter(hexString)) {
                 for (byte b : hash) {
-                    formatter.format("%02x", b); // %02x ensures two hex characters, with leading zero if needed
+                    formatter.format("%02x", b);
                 }
             }
-            String calculatedSignature = hexString.toString(); // This is the hex-encoded signature
+            String calculatedSignature = hexString.toString();
 
             logger.info("Received webhook signature (from header): {}", signature);
             logger.info("Calculated webhook signature (from raw payload): {}", calculatedSignature);
 
-            // Paystack sends the hex signature as lowercase, but comparing case-insensitively is robust.
             if (!calculatedSignature.equalsIgnoreCase(signature)) {
                 logger.error("WEBHOOK SIGNATURE MISMATCH! Calculated vs. Received. This is critical.");
-                logger.error("Raw Payload: {}", rawPayload); // Log the raw payload for inspection
+                logger.error("Raw Payload: {}", rawPayload);
                 return false;
             }
             logger.info("Webhook signature verified successfully.");
@@ -387,30 +376,27 @@ public class PaymentService {
 
     public void handlePaystackWebhook(PaystackWebhookRequest webhookPayload) {
         String event = webhookPayload.event;
-        PaystackWebhookRequest.Data data = webhookPayload.data; // Use the Data object directly
+        PaystackWebhookRequest.Data data = webhookPayload.data;
 
         String transactionReference = data.reference;
-        String statusFromWebhook = data.status; // e.g., "success"
+        String statusFromWebhook = data.status;
 
         String customerEmail = (data.customer != null) ? data.customer.email : "unknown@example.com";
 
         String orderFirebaseKey = null;
 
-        // --- IMPROVED METADATA HANDLING START ---
-        Object metadataObj = data.metadata; // Get as Object first
+        Object metadataObj = data.metadata;
 
-        if (metadataObj instanceof Map) { // Check if it's actually a Map
-            Map<String, Object> metadata = (Map<String, Object>) metadataObj; // Safely cast
+        if (metadataObj instanceof Map) {
+            Map<String, Object> metadata = (Map<String, Object>) metadataObj;
             if (metadata != null) {
                 orderFirebaseKey = (String) metadata.get("order_firebase_key");
             }
         } else if (metadataObj != null) {
-            // Log if metadata is not a Map, but not null (e.g., it's a Double, String, etc.)
             logger.warn("Webhook 'metadata' field is not a Map. Actual type: {}. Value: {}. Cannot extract order_firebase_key.",
                         metadataObj.getClass().getName(),
                         metadataObj);
         }
-        // --- IMPROVED METADATA HANDLING END ---
 
         logger.info("Processing Paystack webhook (parsed): Event={}, Reference={}, Status={}, OrderFirebaseKey={}, CustomerEmail={}", event, transactionReference, statusFromWebhook, orderFirebaseKey, customerEmail);
 
@@ -421,7 +407,6 @@ public class PaymentService {
 
         final String finalOrderFirebaseKey = orderFirebaseKey;
 
-        // Using a Firebase listener for a one-time read
         findUserIdByOrderKey(finalOrderFirebaseKey, (userIdFound) -> {
             if (userIdFound != null) {
                 DatabaseReference orderStatusRef = firebaseDatabase.getReference("Users")
@@ -431,13 +416,12 @@ public class PaymentService {
                         .child("status");
 
                 String newOrderStatus;
-                // Determine new status based on webhook event and data status
                 if ("charge.success".equalsIgnoreCase(event) || "success".equalsIgnoreCase(statusFromWebhook)) {
                     newOrderStatus = "Confirmed";
                 } else if ("charge.failed".equalsIgnoreCase(event) || "transfer.failed".equalsIgnoreCase(event) || "failed".equalsIgnoreCase(statusFromWebhook) || "reversed".equalsIgnoreCase(statusFromWebhook)) {
                     newOrderStatus = "Payment Failed";
                 } else {
-                    newOrderStatus = "Payment Pending"; // Default or other statuses
+                    newOrderStatus = "Payment Pending";
                 }
 
                 logger.info("Attempting to update Firebase order {} status to: {}", finalOrderFirebaseKey, newOrderStatus);
@@ -452,7 +436,7 @@ public class PaymentService {
                     }
                 });
             } else {
-                logger.warn("Could not find Firebase User ID for orderFirebaseKey: {}. Cannot update Firebase order.", finalOrderFirebaseKey);
+                logger.warn("Could not find Firebase User ID for orderFirebaseKey: {}. Cannot update Firebase order. This order may not be directly tied to a user's 'orders' node.", finalOrderFirebaseKey);
             }
         });
     }
@@ -467,15 +451,35 @@ public class PaymentService {
      */
     private void findUserIdByOrderKey(String orderFirebaseKey, Consumer<String> callback) {
         DatabaseReference usersRef = firebaseDatabase.getReference("Users");
+        logger.info("DEBUG: Searching for User ID for orderFirebaseKey: {}. Checking under /Users/...", orderFirebaseKey);
+
         usersRef.addListenerForSingleValueEvent(new ValueEventListener() {
             @Override
             public void onDataChange(@NonNull DataSnapshot usersSnapshot) {
                 String foundUserId = null;
+                if (!usersSnapshot.exists()) {
+                    logger.warn("DEBUG: No 'Users' node found in Firebase Realtime Database.");
+                    callback.accept(null);
+                    return;
+                }
+                logger.info("DEBUG: Found {} user nodes. Iterating to find order {}.", usersSnapshot.getChildrenCount(), orderFirebaseKey);
                 for (DataSnapshot userNode : usersSnapshot.getChildren()) {
-                    if (userNode.child("orders").hasChild(orderFirebaseKey)) {
-                        foundUserId = userNode.getKey();
-                        break;
+                    String currentUserId = userNode.getKey();
+                    if (currentUserId == null) {
+                        logger.warn("DEBUG: Found a user node with null key.");
+                        continue;
                     }
+                    logger.info("DEBUG: Checking user: {} for order: {}", currentUserId, orderFirebaseKey);
+                    if (userNode.child("orders").hasChild(orderFirebaseKey)) {
+                        foundUserId = currentUserId;
+                        logger.info("DEBUG: Found order {} under user {}.", orderFirebaseKey, foundUserId);
+                        break;
+                    } else {
+                        logger.info("DEBUG: Order {} not found under user {}.", orderFirebaseKey, currentUserId);
+                    }
+                }
+                if (foundUserId == null) {
+                    logger.warn("DEBUG: Finished iterating users. OrderFirebaseKey {} not found under any user's 'orders' node.", orderFirebaseKey);
                 }
                 callback.accept(foundUserId);
             }
