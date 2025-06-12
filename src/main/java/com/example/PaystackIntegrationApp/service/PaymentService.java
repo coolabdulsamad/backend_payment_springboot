@@ -12,6 +12,7 @@ import com.google.firebase.database.FirebaseDatabase;
 import com.google.firebase.database.ValueEventListener;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException; // Import for JSON parsing error
 import com.google.gson.reflect.TypeToken;
 import io.micrometer.common.lang.NonNull;
 import io.micrometer.common.lang.Nullable;
@@ -44,7 +45,7 @@ public class PaymentService {
     private static final Logger logger = LoggerFactory.getLogger(PaymentService.class);
 
     @Value("${paystack.secretKey}")
-    private String paystackSecretKey;
+    private String paystackSecretKey; // This will now be trimmed to ensure no whitespace
 
     private final PaymentMethodRepository paymentMethodRepository;
     private final OkHttpClient httpClient;
@@ -58,6 +59,17 @@ public class PaymentService {
         this.firebaseDatabase = firebaseDatabase;
         logger.info("PaymentService constructor initialized with FirebaseDatabase bean.");
     }
+
+    // Ensure the secret key is trimmed after it's injected (Spring will call this after construction)
+    @Value("${paystack.secretKey}")
+    public void setPaystackSecretKey(String paystackSecretKey) {
+        // Trim any leading/trailing whitespace immediately upon injection
+        this.paystackSecretKey = paystackSecretKey.trim();
+        logger.info("Paystack Secret Key loaded and trimmed. Length: {}", this.paystackSecretKey.length());
+        logger.info("DEBUG: Paystack Secret Key being used for verification (first 5 chars after trim): {}", this.paystackSecretKey.substring(0, Math.min(this.paystackSecretKey.length(), 5)));
+        // Remove the above DEBUG line once this is working
+    }
+
 
     public void processPaymentReference(String reference, String userId) throws IOException {
         Map<String, Object> verificationResponse = verifyTransaction(reference);
@@ -192,7 +204,6 @@ public class PaymentService {
             String responseBodyString = response.body() != null ? response.body().string() : "No response body";
             logger.info("Paystack /charge raw response: {}", responseBodyString);
 
-            // Always attempt to parse the full response, even on non-200, to get 'actionRequired' or 'data'
             Type type = new TypeToken<Map<String, Object>>() {}.getType();
             Map<String, Object> responseMap = gson.fromJson(responseBodyString, type);
 
@@ -201,19 +212,18 @@ public class PaymentService {
             Map<String, Object> data = (Map<String, Object>) responseMap.getOrDefault("data", Collections.emptyMap());
 
             String gatewayResponse = (String) data.getOrDefault("gateway_response", "unknown");
-            String receivedReference = (String) data.getOrDefault("reference", transactionReference); // Use reference from data if available
-            String actionRequired = (String) data.get("status"); // Paystack uses 'status' in data for next action
+            String receivedReference = (String) data.getOrDefault("reference", transactionReference);
+            String actionRequired = (String) data.get("status");
 
             if (!response.isSuccessful()) {
                 logger.error("Failed to charge saved card via Paystack (non-200 response): {} - {}", response.code(), responseBodyString);
-                // Even on error, we might get an actionRequired. Pass it through.
                 return new ChargeResponse(
-                    status, // Use Paystack's status
+                    status,
                     message,
                     gatewayResponse,
                     receivedReference,
-                    actionRequired, // Pass through actionRequired
-                    data // Pass the full data map
+                    actionRequired,
+                    data
                 );
             }
 
@@ -222,31 +232,20 @@ public class PaymentService {
         }
     }
 
-    /**
-     * Submits a challenge (PIN, OTP, Birthday) to Paystack for a transaction requiring further authentication.
-     * @param transactionReference The reference of the transaction.
-     * @param challengeType The type of challenge (e.g., "pin", "otp", "birthday") to determine the Paystack endpoint.
-     * @param challengeValue The value (PIN, OTP, Birthday) provided by the user.
-     * @return ChargeResponse indicating the status of the submission.
-     * @throws IOException If there's a network error or an issue communicating with Paystack.
-     */
     public ChargeResponse submitChallenge(String transactionReference, String challengeType, String challengeValue) throws IOException {
         String url;
         String paramKey;
 
         switch (challengeType.toLowerCase(Locale.ROOT)) {
-            case "send_pin": // This is what Paystack sends in 'data.status' for PIN
-            case "pin": // This is what our app will send as challengeType
+            case "pin":
                 url = "https://api.paystack.co/charge/submit_pin";
                 paramKey = "pin";
                 break;
-            case "send_otp": // Paystack status for OTP
-            case "otp": // Our app's challengeType for OTP
+            case "otp":
                 url = "https://api.paystack.co/charge/submit_otp";
                 paramKey = "otp";
                 break;
-            case "send_birthday": // Paystack status for Birthday
-            case "birthday": // Our app's challengeType for Birthday
+            case "birthday":
                 url = "https://api.paystack.co/charge/submit_birthday";
                 paramKey = "birthday";
                 break;
@@ -273,7 +272,6 @@ public class PaymentService {
             String responseBodyString = response.body() != null ? response.body().string() : "No response body";
             logger.info("Paystack {} raw response: {}", url, responseBodyString);
 
-            // Always parse the full response to extract next action and data
             Type type = new TypeToken<Map<String, Object>>() {}.getType();
             Map<String, Object> responseMap = gson.fromJson(responseBodyString, type);
 
@@ -283,7 +281,7 @@ public class PaymentService {
 
             String gatewayResponse = (String) data.getOrDefault("gateway_response", "unknown");
             String receivedReference = (String) data.getOrDefault("reference", transactionReference);
-            String actionRequired = (String) data.get("status"); // Paystack uses 'status' in data for next action
+            String actionRequired = (String) data.get("status");
 
             if (!response.isSuccessful()) {
                 logger.error("Failed to submit challenge via Paystack (non-200 response): {} - {}", response.code(), responseBodyString);
@@ -302,48 +300,76 @@ public class PaymentService {
         }
     }
 
-
-        /**
-         * Verifies the Paystack webhook signature.
-         * @param webhookPayload The raw webhook payload (JSON string).
-         * @param signature The X-Paystack-Signature header value.
-         * @return True if the signature is valid, false otherwise.
-         */
-        public boolean verifyWebhookSignature(PaystackWebhookRequest webhookPayload, String signature) {
-            try {
-                // TEMPORARY DEBUGGING LINE: Log the secret key being used for verification
-                // *** REMOVE THIS LINE AFTER DEBUGGING IS COMPLETE ***
-                logger.info("DEBUG: Paystack Secret Key being used for webhook verification (first 5 chars): {}", paystackSecretKey.substring(0, Math.min(paystackSecretKey.length(), 5)));
-                // *** REMOVE THIS LINE AFTER DEBUGGING IS COMPLETE ***
-
-
-                String jsonPayload = gson.toJson(webhookPayload);
-                Mac sha512_HMAC = Mac.getInstance("HmacSHA512");
-                SecretKeySpec secretKeySpec = new SecretKeySpec(paystackSecretKey.getBytes(StandardCharsets.UTF_8), "HmacSHA512");
-                sha512_HMAC.init(secretKeySpec);
-                byte[] hash = sha512_HMAC.doFinal(jsonPayload.getBytes(StandardCharsets.UTF_8));
-                String expectedSignature = Base64.getEncoder().encodeToString(hash);
-
-                logger.info("Received webhook signature: {}", signature);
-                logger.info("Calculated webhook signature: {}", expectedSignature);
-
-                if (!expectedSignature.equals(signature)) {
-                    logger.error("WEBHOOK SIGNATURE MISMATCH! This means the secret key configured is likely incorrect or there's a payload discrepancy.");
-                    return false;
-                }
-                logger.info("Webhook signature verified successfully.");
-                return true;
-            } catch (NoSuchAlgorithmException | InvalidKeyException e) {
-                logger.error("Error during webhook signature verification: {}", e.getMessage(), e);
-                return false;
-            }
+    /**
+     * Processes the raw Paystack webhook payload, verifies its signature,
+     * and updates Firebase if valid.
+     * @param rawWebhookPayload The raw JSON string of the webhook body.
+     * @param signature The X-Paystack-Signature header value.
+     * @throws Exception if verification fails or processing encounters an error.
+     */
+    public void processPaystackWebhook(String rawWebhookPayload, String signature) throws Exception {
+        // First, verify the signature using the raw payload string
+        if (!verifyWebhookSignature(rawWebhookPayload, signature)) {
+            throw new Exception("Webhook signature verification failed.");
         }
 
+        // If verification passes, then parse the payload into the object
+        PaystackWebhookRequest webhookPayload;
+        try {
+            webhookPayload = gson.fromJson(rawWebhookPayload, PaystackWebhookRequest.class);
+        } catch (JsonSyntaxException e) {
+            logger.error("Failed to parse raw webhook payload JSON: {}", rawWebhookPayload, e);
+            throw new Exception("Invalid JSON payload received.", e);
+        }
+
+        // Now, handle the processed webhook
+        handlePaystackWebhook(webhookPayload);
+    }
+
+    /**
+     * Verifies the Paystack webhook signature using the raw payload string.
+     * @param rawPayload The raw webhook payload (JSON string).
+     * @param signature The X-Paystack-Signature header value.
+     * @return True if the signature is valid, false otherwise.
+     */
+    public boolean verifyWebhookSignature(String rawPayload, String signature) {
+        try {
+            // Log the secret key being used for verification (with length and trimmed flag)
+            logger.info("DEBUG: Paystack Secret Key for webhook verification. Length: {}, Trimmed: {}. First 5 chars: {}",
+                        paystackSecretKey.length(),
+                        paystackSecretKey.equals(paystackSecretKey.trim()),
+                        paystackSecretKey.substring(0, Math.min(paystackSecretKey.length(), 5)));
+            // IMPORTANT: Remove the above DEBUG line once this is confirmed working.
+
+            Mac sha512_HMAC = Mac.getInstance("HmacSHA512");
+            // Use the already trimmed paystackSecretKey
+            SecretKeySpec secretKeySpec = new SecretKeySpec(paystackSecretKey.getBytes(StandardCharsets.UTF_8), "HmacSHA512");
+            sha512_HMAC.init(secretKeySpec);
+            byte[] hash = sha512_HMAC.doFinal(rawPayload.getBytes(StandardCharsets.UTF_8));
+            String expectedSignature = Base64.getEncoder().encodeToString(hash); // Paystack's signature is Base64 encoded
+
+            logger.info("Received webhook signature (from header): {}", signature);
+            logger.info("Calculated webhook signature (from raw payload): {}", expectedSignature);
+
+            if (!expectedSignature.equals(signature)) {
+                logger.error("WEBHOOK SIGNATURE MISMATCH! Calculated vs. Received. This is critical.");
+                logger.error("Raw Payload: {}", rawPayload);
+                return false;
+            }
+            logger.info("Webhook signature verified successfully.");
+            return true;
+        } catch (NoSuchAlgorithmException | InvalidKeyException e) {
+            logger.error("Error during webhook signature verification: {}", e.getMessage(), e);
+            return false;
+        }
+    }
+
+    // Moved the Firebase update logic into a separate method now called by processPaystackWebhook
     public void handlePaystackWebhook(PaystackWebhookRequest webhookPayload) {
         String event = webhookPayload.event;
         Map<String, Object> data = webhookPayload.data;
         String transactionReference = (String) data.get("reference");
-        String statusFromWebhook = (String) data.get("status");
+        String statusFromWebhook = (String) data.get("status"); // e.g., "success"
 
         Map<String, Object> customerData = (Map<String, Object>) data.get("customer");
         String customerEmail = (customerData != null) ? (String) customerData.get("email") : "unknown@example.com";
@@ -354,7 +380,7 @@ public class PaymentService {
             orderFirebaseKey = (String) metadata.get("order_firebase_key");
         }
 
-        logger.info("Processing Paystack webhook: Event={}, Reference={}, Status={}, OrderFirebaseKey={}, CustomerEmail={}", event, transactionReference, statusFromWebhook, orderFirebaseKey, customerEmail);
+        logger.info("Processing Paystack webhook (parsed): Event={}, Reference={}, Status={}, OrderFirebaseKey={}, CustomerEmail={}", event, transactionReference, statusFromWebhook, orderFirebaseKey, customerEmail);
 
         if (orderFirebaseKey == null) {
             logger.warn("Webhook received without 'order_firebase_key' in metadata. Cannot update Firebase order. Reference: {}", transactionReference);
@@ -372,7 +398,8 @@ public class PaymentService {
                         .child("status");
 
                 String newOrderStatus;
-                if ("charge.success".equalsIgnoreCase(event) || "transfer.success".equalsIgnoreCase(event) || "success".equalsIgnoreCase(statusFromWebhook)) {
+                // Check for 'success' status explicitly in data, or 'charge.success' event
+                if ("charge.success".equalsIgnoreCase(event) || "success".equalsIgnoreCase(statusFromWebhook)) {
                     newOrderStatus = "Confirmed";
                 } else if ("charge.failed".equalsIgnoreCase(event) || "transfer.failed".equalsIgnoreCase(event) || "failed".equalsIgnoreCase(statusFromWebhook) || "reversed".equalsIgnoreCase(statusFromWebhook)) {
                     newOrderStatus = "Payment Failed";
@@ -380,6 +407,7 @@ public class PaymentService {
                     newOrderStatus = "Payment Pending";
                 }
 
+                logger.info("Attempting to update Firebase order {} status to: {}", finalOrderFirebaseKey, newOrderStatus);
                 orderStatusRef.setValue(newOrderStatus, new DatabaseReference.CompletionListener() {
                     @Override
                     public void onComplete(@Nullable DatabaseError error, @NonNull DatabaseReference ref) {

@@ -98,7 +98,6 @@ public class PaymentController {
             return new ResponseEntity<>(response, HttpStatus.OK);
         } catch (IOException e) {
             e.printStackTrace();
-            // Create a ChargeResponse even on network error, with data as null
             return new ResponseEntity<>(new ChargeResponse(
                 false,
                 "Failed to communicate with Paystack: " + e.getMessage(),
@@ -111,7 +110,6 @@ public class PaymentController {
             );
         } catch (Exception e) {
             e.printStackTrace();
-            // Create a ChargeResponse even on internal error, with data as null
             return new ResponseEntity<>(new ChargeResponse(
                 false,
                 "An unexpected error occurred: " + e.getMessage(),
@@ -155,18 +153,26 @@ public class PaymentController {
         }
     }
 
-    /**
-     * New endpoint to submit PIN/OTP/Birthday for Paystack transaction challenges.
-     * The payload now explicitly includes the 'challengeType'.
-     * @param payload A map containing "reference" (transaction reference), "challengeValue" (the PIN/OTP/Birthday),
-     * and "challengeType" (e.g., "pin", "otp", "birthday").
-     * @return ChargeResponse indicating the status of the submission.
-     */
+    // UPDATED Webhook Endpoint for Paystack to receive raw body
+    @PostMapping("/paystack-webhook")
+    public ResponseEntity<String> handlePaystackWebhook(
+            @RequestHeader("x-paystack-signature") String signature,
+            @RequestBody String rawWebhookPayload) { // Receive as raw String
+        try {
+            // Pass the raw payload string to the service for verification and processing
+            paymentService.processPaystackWebhook(rawWebhookPayload, signature);
+            return new ResponseEntity<>("Webhook received and processed", HttpStatus.OK);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return new ResponseEntity<>("Error processing webhook: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
     @PostMapping("/submit-challenge")
     public ResponseEntity<ChargeResponse> submitChallenge(@RequestBody Map<String, String> payload) {
         String reference = payload.get("reference");
-        String challengeValue = payload.get("challengeValue"); // Renamed for clarity
-        String challengeType = payload.get("challengeType"); // New: type of challenge
+        String challengeValue = payload.get("challengeValue");
+        String challengeType = payload.get("challengeType");
 
         if (reference == null || reference.isEmpty() || challengeValue == null || challengeValue.isEmpty() || challengeType == null || challengeType.isEmpty()) {
             return new ResponseEntity<>(new ChargeResponse(
@@ -180,7 +186,6 @@ public class PaymentController {
         }
 
         try {
-            // Pass the challengeType to the service method
             ChargeResponse response = paymentService.submitChallenge(reference, challengeType, challengeValue);
             return new ResponseEntity<>(response, HttpStatus.OK);
         } catch (IOException e) {
@@ -203,23 +208,6 @@ public class PaymentController {
                 null,
                 null
             ), HttpStatus.INTERNAL_SERVER_ERROR);
-        }
-    }
-    
-        @PostMapping("/paystack-webhook")
-    public ResponseEntity<String> handlePaystackWebhook(
-            @RequestHeader("x-paystack-signature") String signature,
-            @RequestBody PaystackWebhookRequest webhookPayload) {
-        try {
-            if (!paymentService.verifyWebhookSignature(webhookPayload, signature)) {
-                return new ResponseEntity<>("Invalid signature", HttpStatus.BAD_REQUEST);
-            }
-
-            paymentService.handlePaystackWebhook(webhookPayload);
-            return new ResponseEntity<>("Webhook received and processed", HttpStatus.OK);
-        } catch (Exception e) {
-            e.printStackTrace();
-            return new ResponseEntity<>("Error processing webhook: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 }
