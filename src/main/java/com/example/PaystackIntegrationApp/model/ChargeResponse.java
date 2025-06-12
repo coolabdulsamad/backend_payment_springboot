@@ -1,29 +1,36 @@
 package com.example.PaystackIntegrationApp.model;
 
+import java.util.Map;
+
 public class ChargeResponse {
     private boolean status;
     private String message;
     private String gatewayResponse;
     private String transactionReference;
-    private String actionRequired; // New field to indicate if further action (like PIN) is needed
+    private String actionRequired; // e.g., "send_pin", "send_otp", "send_birthday"
+    private Map<String, Object> data; // New field to hold the raw 'data' object from Paystack
 
     public ChargeResponse() {
     }
 
+    // Existing constructor (update if needed to set data to null)
     public ChargeResponse(boolean status, String message, String gatewayResponse, String transactionReference) {
         this.status = status;
         this.message = message;
         this.gatewayResponse = gatewayResponse;
         this.transactionReference = transactionReference;
-        this.actionRequired = null; // Default to null
+        this.actionRequired = null;
+        this.data = null;
     }
 
-    public ChargeResponse(boolean status, String message, String gatewayResponse, String transactionReference, String actionRequired) {
+    // Updated constructor including actionRequired and data map
+    public ChargeResponse(boolean status, String message, String gatewayResponse, String transactionReference, String actionRequired, Map<String, Object> data) {
         this.status = status;
         this.message = message;
         this.gatewayResponse = gatewayResponse;
         this.transactionReference = transactionReference;
         this.actionRequired = actionRequired;
+        this.data = data;
     }
 
     // Getters
@@ -43,8 +50,12 @@ public class ChargeResponse {
         return transactionReference;
     }
 
-    public String getActionRequired() { // New getter
+    public String getActionRequired() {
         return actionRequired;
+    }
+
+    public Map<String, Object> getData() { // New getter for the data map
+        return data;
     }
 
     // Setters
@@ -64,7 +75,11 @@ public class ChargeResponse {
         this.transactionReference = transactionReference;
     }
 
-    public void setActionRequired(String actionRequired) { // New setter
+    public void setActionRequired(String actionRequired) {
         this.actionRequired = actionRequired;
+    }
+
+    public void setData(Map<String, Object> data) { // New setter for the data map
+        this.data = data;
     }
 }

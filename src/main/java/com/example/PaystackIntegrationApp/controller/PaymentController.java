@@ -10,7 +10,7 @@ import com.example.PaystackIntegrationApp.service.PaymentService;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.io.IOException; // Import IOException
+import java.io.IOException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -98,23 +98,27 @@ public class PaymentController {
             return new ResponseEntity<>(response, HttpStatus.OK);
         } catch (IOException e) {
             e.printStackTrace();
+            // Create a ChargeResponse even on network error, with data as null
             return new ResponseEntity<>(new ChargeResponse(
                 false,
                 "Failed to communicate with Paystack: " + e.getMessage(),
                 "network_error",
                 request.getTransactionReference(),
-                null // No specific action required on network error
+                null,
+                null
                 ),
                 HttpStatus.INTERNAL_SERVER_ERROR
             );
         } catch (Exception e) {
             e.printStackTrace();
+            // Create a ChargeResponse even on internal error, with data as null
             return new ResponseEntity<>(new ChargeResponse(
                 false,
                 "An unexpected error occurred: " + e.getMessage(),
                 "internal_error",
                 request.getTransactionReference(),
-                null // No specific action required on internal error
+                null,
+                null
                 ),
                 HttpStatus.INTERNAL_SERVER_ERROR
             );
@@ -151,7 +155,6 @@ public class PaymentController {
         }
     }
 
-    // New Webhook Endpoint for Paystack
     @PostMapping("/paystack-webhook")
     public ResponseEntity<String> handlePaystackWebhook(
             @RequestHeader("x-paystack-signature") String signature,
@@ -171,26 +174,31 @@ public class PaymentController {
 
     /**
      * New endpoint to submit PIN/OTP/Birthday for Paystack transaction challenges.
-     * @param payload A map containing "reference" (transaction reference) and "pin" (the PIN/OTP/Birthday).
+     * The payload now explicitly includes the 'challengeType'.
+     * @param payload A map containing "reference" (transaction reference), "challengeValue" (the PIN/OTP/Birthday),
+     * and "challengeType" (e.g., "pin", "otp", "birthday").
      * @return ChargeResponse indicating the status of the submission.
      */
     @PostMapping("/submit-challenge")
     public ResponseEntity<ChargeResponse> submitChallenge(@RequestBody Map<String, String> payload) {
         String reference = payload.get("reference");
-        String pin = payload.get("pin"); // Use 'pin' as a generic term for the challenge value
+        String challengeValue = payload.get("challengeValue"); // Renamed for clarity
+        String challengeType = payload.get("challengeType"); // New: type of challenge
 
-        if (reference == null || reference.isEmpty() || pin == null || pin.isEmpty()) {
+        if (reference == null || reference.isEmpty() || challengeValue == null || challengeValue.isEmpty() || challengeType == null || challengeType.isEmpty()) {
             return new ResponseEntity<>(new ChargeResponse(
                 false,
-                "Invalid request: Missing reference or PIN/Challenge value.",
+                "Invalid request: Missing reference, challenge value, or challenge type.",
                 "invalid_input",
                 reference,
+                null,
                 null
             ), HttpStatus.BAD_REQUEST);
         }
 
         try {
-            ChargeResponse response = paymentService.submitPin(reference, pin); // submitPin is generalized to handle any challenge value
+            // Pass the challengeType to the service method
+            ChargeResponse response = paymentService.submitChallenge(reference, challengeType, challengeValue);
             return new ResponseEntity<>(response, HttpStatus.OK);
         } catch (IOException e) {
             e.printStackTrace();
@@ -199,6 +207,7 @@ public class PaymentController {
                 "Failed to communicate with Paystack for challenge submission: " + e.getMessage(),
                 "network_error",
                 reference,
+                null,
                 null
             ), HttpStatus.INTERNAL_SERVER_ERROR);
         } catch (Exception e) {
@@ -208,6 +217,7 @@ public class PaymentController {
                 "An unexpected error occurred during challenge submission: " + e.getMessage(),
                 "internal_error",
                 reference,
+                null,
                 null
             ), HttpStatus.INTERNAL_SERVER_ERROR);
         }

@@ -30,6 +30,7 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Consumer;
 
@@ -191,69 +192,71 @@ public class PaymentService {
             String responseBodyString = response.body() != null ? response.body().string() : "No response body";
             logger.info("Paystack /charge raw response: {}", responseBodyString);
 
-            if (!response.isSuccessful()) {
-                logger.error("Failed to charge saved card via Paystack: {} - {}", response.code(), responseBodyString);
-                Map<String, Object> errorResponseMap = gson.fromJson(responseBodyString, new TypeToken<Map<String, Object>>() {}.getType());
-                String paystackMessage = (String) errorResponseMap.getOrDefault("message", "Unknown Paystack error");
-                Map<String, Object> dataMap = (Map<String, Object>) errorResponseMap.getOrDefault("data", Collections.emptyMap());
-                String paystackGatewayResponse = (String) dataMap.getOrDefault("gateway_response", "failed");
-
-                // If non-200, still try to parse actionRequired if present
-                String actionRequired = null;
-                if (dataMap.containsKey("status")) {
-                    actionRequired = (String) dataMap.get("status");
-                }
-
-                return new ChargeResponse(
-                    false, // Consider this initial attempt as not successful from 200 perspective
-                    "Failed to charge saved card: " + response.code() + " - " + paystackMessage,
-                    paystackGatewayResponse,
-                    transactionReference,
-                    actionRequired // Pass through actionRequired even on error
-                );
-            }
-
+            // Always attempt to parse the full response, even on non-200, to get 'actionRequired' or 'data'
             Type type = new TypeToken<Map<String, Object>>() {}.getType();
             Map<String, Object> responseMap = gson.fromJson(responseBodyString, type);
 
-            boolean status = (boolean) responseMap.get("status");
-            String message = (String) responseMap.get("message");
-            Map<String, Object> data = (Map<String, Object>) responseMap.get("data");
+            boolean status = (boolean) responseMap.getOrDefault("status", false);
+            String message = (String) responseMap.getOrDefault("message", "Unknown error");
+            Map<String, Object> data = (Map<String, Object>) responseMap.getOrDefault("data", Collections.emptyMap());
 
-            String gatewayResponse = "unknown";
-            String receivedReference = transactionReference;
-            String actionRequired = null; // Initialize actionRequired here
+            String gatewayResponse = (String) data.getOrDefault("gateway_response", "unknown");
+            String receivedReference = (String) data.getOrDefault("reference", transactionReference); // Use reference from data if available
+            String actionRequired = (String) data.get("status"); // Paystack uses 'status' in data for next action
 
-            if (data != null) {
-                if (data.containsKey("gateway_response")) {
-                    gatewayResponse = (String) data.get("gateway_response");
-                }
-                if (data.containsKey("reference")) {
-                    receivedReference = (String) data.get("reference");
-                }
-                // Check for actionRequired status from Paystack's 'data.status'
-                if (data.containsKey("status")) {
-                    actionRequired = (String) data.get("status");
-                }
+            if (!response.isSuccessful()) {
+                logger.error("Failed to charge saved card via Paystack (non-200 response): {} - {}", response.code(), responseBodyString);
+                // Even on error, we might get an actionRequired. Pass it through.
+                return new ChargeResponse(
+                    status, // Use Paystack's status
+                    message,
+                    gatewayResponse,
+                    receivedReference,
+                    actionRequired, // Pass through actionRequired
+                    data // Pass the full data map
+                );
             }
+
             logger.info("Charge saved card response. Status: {}, Message: {}, Gateway Response: {}, Action Required: {}", status, message, gatewayResponse, actionRequired);
-            // Pass the actionRequired to the ChargeResponse constructor
-            return new ChargeResponse(status, message, gatewayResponse, receivedReference, actionRequired);
+            return new ChargeResponse(status, message, gatewayResponse, receivedReference, actionRequired, data);
         }
     }
 
     /**
-     * Submits a PIN/OTP/Birthday to Paystack for a transaction requiring further authentication.
+     * Submits a challenge (PIN, OTP, Birthday) to Paystack for a transaction requiring further authentication.
      * @param transactionReference The reference of the transaction.
-     * @param pin The PIN/OTP/Birthday provided by the user.
+     * @param challengeType The type of challenge (e.g., "pin", "otp", "birthday") to determine the Paystack endpoint.
+     * @param challengeValue The value (PIN, OTP, Birthday) provided by the user.
      * @return ChargeResponse indicating the status of the submission.
      * @throws IOException If there's a network error or an issue communicating with Paystack.
      */
-    public ChargeResponse submitPin(String transactionReference, String pin) throws IOException {
-        String url = "https://api.paystack.co/charge/submit_pin"; // Or /charge/submit_otp, /charge/submit_birthday based on challenge
+    public ChargeResponse submitChallenge(String transactionReference, String challengeType, String challengeValue) throws IOException {
+        String url;
+        String paramKey;
+
+        switch (challengeType.toLowerCase(Locale.ROOT)) {
+            case "send_pin": // This is what Paystack sends in 'data.status' for PIN
+            case "pin": // This is what our app will send as challengeType
+                url = "https://api.paystack.co/charge/submit_pin";
+                paramKey = "pin";
+                break;
+            case "send_otp": // Paystack status for OTP
+            case "otp": // Our app's challengeType for OTP
+                url = "https://api.paystack.co/charge/submit_otp";
+                paramKey = "otp";
+                break;
+            case "send_birthday": // Paystack status for Birthday
+            case "birthday": // Our app's challengeType for Birthday
+                url = "https://api.paystack.co/charge/submit_birthday";
+                paramKey = "birthday";
+                break;
+            default:
+                logger.error("Unknown challenge type: {}", challengeType);
+                return new ChargeResponse(false, "Unknown challenge type provided.", "invalid_challenge_type", transactionReference, null, null);
+        }
 
         Map<String, String> bodyMap = new HashMap<>();
-        bodyMap.put("pin", pin);
+        bodyMap.put(paramKey, challengeValue);
         bodyMap.put("reference", transactionReference);
 
         RequestBody body = RequestBody.create(MediaType.parse("application/json"), gson.toJson(bodyMap));
@@ -264,53 +267,38 @@ public class PaymentService {
                 .post(body)
                 .build();
 
-        logger.info("Attempting to submit PIN for transaction: {}", transactionReference);
+        logger.info("Attempting to submit {} for transaction: {}", challengeType, transactionReference);
 
         try (Response response = httpClient.newCall(request).execute()) {
             String responseBodyString = response.body() != null ? response.body().string() : "No response body";
-            logger.info("Paystack /charge/submit_pin raw response: {}", responseBodyString);
+            logger.info("Paystack {} raw response: {}", url, responseBodyString);
 
-            if (!response.isSuccessful()) {
-                logger.error("Failed to submit PIN to Paystack: {} - {}", response.code(), responseBodyString);
-                Map<String, Object> errorResponseMap = gson.fromJson(responseBodyString, new TypeToken<Map<String, Object>>() {}.getType());
-                String paystackMessage = (String) errorResponseMap.getOrDefault("message", "Unknown Paystack error during PIN submission");
-                Map<String, Object> dataMap = (Map<String, Object>) errorResponseMap.getOrDefault("data", Collections.emptyMap());
-                String paystackGatewayResponse = (String) dataMap.getOrDefault("gateway_response", "failed_pin_submission");
-                String actionRequired = (String) dataMap.get("status"); // May indicate next action if needed
-
-                return new ChargeResponse(
-                    false,
-                    "PIN submission failed: " + paystackMessage,
-                    paystackGatewayResponse,
-                    transactionReference,
-                    actionRequired
-                );
-            }
-
+            // Always parse the full response to extract next action and data
             Type type = new TypeToken<Map<String, Object>>() {}.getType();
             Map<String, Object> responseMap = gson.fromJson(responseBodyString, type);
 
-            boolean status = (boolean) responseMap.get("status");
-            String message = (String) responseMap.get("message");
-            Map<String, Object> data = (Map<String, Object>) responseMap.get("data");
+            boolean status = (boolean) responseMap.getOrDefault("status", false);
+            String message = (String) responseMap.getOrDefault("message", "Unknown error during challenge submission.");
+            Map<String, Object> data = (Map<String, Object>) responseMap.getOrDefault("data", Collections.emptyMap());
 
-            String gatewayResponse = "unknown";
-            String receivedReference = transactionReference;
-            String actionRequired = null;
+            String gatewayResponse = (String) data.getOrDefault("gateway_response", "unknown");
+            String receivedReference = (String) data.getOrDefault("reference", transactionReference);
+            String actionRequired = (String) data.get("status"); // Paystack uses 'status' in data for next action
 
-            if (data != null) {
-                if (data.containsKey("gateway_response")) {
-                    gatewayResponse = (String) data.get("gateway_response");
-                }
-                if (data.containsKey("reference")) {
-                    receivedReference = (String) data.get("reference");
-                }
-                if (data.containsKey("status")) {
-                    actionRequired = (String) data.get("status");
-                }
+            if (!response.isSuccessful()) {
+                logger.error("Failed to submit challenge via Paystack (non-200 response): {} - {}", response.code(), responseBodyString);
+                return new ChargeResponse(
+                    status,
+                    message,
+                    gatewayResponse,
+                    receivedReference,
+                    actionRequired,
+                    data
+                );
             }
-            logger.info("PIN submission response. Status: {}, Message: {}, Gateway Response: {}, Action Required: {}", status, message, gatewayResponse, actionRequired);
-            return new ChargeResponse(status, message, gatewayResponse, receivedReference, actionRequired);
+
+            logger.info("Challenge submission response. Status: {}, Message: {}, Gateway Response: {}, Action Required: {}", status, message, gatewayResponse, actionRequired);
+            return new ChargeResponse(status, message, gatewayResponse, receivedReference, actionRequired, data);
         }
     }
 
