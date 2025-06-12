@@ -303,24 +303,41 @@ public class PaymentService {
     }
 
 
-    public boolean verifyWebhookSignature(PaystackWebhookRequest webhookPayload, String signature) {
-        try {
-            String jsonPayload = gson.toJson(webhookPayload);
-            Mac sha512_HMAC = Mac.getInstance("HmacSHA512");
-            SecretKeySpec secretKeySpec = new SecretKeySpec(paystackSecretKey.getBytes(StandardCharsets.UTF_8), "HmacSHA512");
-            sha512_HMAC.init(secretKeySpec);
-            byte[] hash = sha512_HMAC.doFinal(jsonPayload.getBytes(StandardCharsets.UTF_8));
-            String expectedSignature = Base64.getEncoder().encodeToString(hash);
+        /**
+         * Verifies the Paystack webhook signature.
+         * @param webhookPayload The raw webhook payload (JSON string).
+         * @param signature The X-Paystack-Signature header value.
+         * @return True if the signature is valid, false otherwise.
+         */
+        public boolean verifyWebhookSignature(PaystackWebhookRequest webhookPayload, String signature) {
+            try {
+                // TEMPORARY DEBUGGING LINE: Log the secret key being used for verification
+                // *** REMOVE THIS LINE AFTER DEBUGGING IS COMPLETE ***
+                logger.info("DEBUG: Paystack Secret Key being used for webhook verification (first 5 chars): {}", paystackSecretKey.substring(0, Math.min(paystackSecretKey.length(), 5)));
+                // *** REMOVE THIS LINE AFTER DEBUGGING IS COMPLETE ***
 
-            logger.info("Received webhook signature: {}", signature);
-            logger.info("Calculated webhook signature: {}", expectedSignature);
 
-            return expectedSignature.equals(signature);
-        } catch (NoSuchAlgorithmException | InvalidKeyException e) {
-            logger.error("Error during webhook signature verification: {}", e.getMessage(), e);
-            return false;
+                String jsonPayload = gson.toJson(webhookPayload);
+                Mac sha512_HMAC = Mac.getInstance("HmacSHA512");
+                SecretKeySpec secretKeySpec = new SecretKeySpec(paystackSecretKey.getBytes(StandardCharsets.UTF_8), "HmacSHA512");
+                sha512_HMAC.init(secretKeySpec);
+                byte[] hash = sha512_HMAC.doFinal(jsonPayload.getBytes(StandardCharsets.UTF_8));
+                String expectedSignature = Base64.getEncoder().encodeToString(hash);
+
+                logger.info("Received webhook signature: {}", signature);
+                logger.info("Calculated webhook signature: {}", expectedSignature);
+
+                if (!expectedSignature.equals(signature)) {
+                    logger.error("WEBHOOK SIGNATURE MISMATCH! This means the secret key configured is likely incorrect or there's a payload discrepancy.");
+                    return false;
+                }
+                logger.info("Webhook signature verified successfully.");
+                return true;
+            } catch (NoSuchAlgorithmException | InvalidKeyException e) {
+                logger.error("Error during webhook signature verification: {}", e.getMessage(), e);
+                return false;
+            }
         }
-    }
 
     public void handlePaystackWebhook(PaystackWebhookRequest webhookPayload) {
         String event = webhookPayload.event;

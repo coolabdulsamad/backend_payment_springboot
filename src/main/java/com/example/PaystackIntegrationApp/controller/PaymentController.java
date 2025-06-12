@@ -155,23 +155,6 @@ public class PaymentController {
         }
     }
 
-    @PostMapping("/paystack-webhook")
-    public ResponseEntity<String> handlePaystackWebhook(
-            @RequestHeader("x-paystack-signature") String signature,
-            @RequestBody PaystackWebhookRequest webhookPayload) {
-        try {
-            if (!paymentService.verifyWebhookSignature(webhookPayload, signature)) {
-                return new ResponseEntity<>("Invalid signature", HttpStatus.BAD_REQUEST);
-            }
-
-            paymentService.handlePaystackWebhook(webhookPayload);
-            return new ResponseEntity<>("Webhook received and processed", HttpStatus.OK);
-        } catch (Exception e) {
-            e.printStackTrace();
-            return new ResponseEntity<>("Error processing webhook: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
-        }
-    }
-
     /**
      * New endpoint to submit PIN/OTP/Birthday for Paystack transaction challenges.
      * The payload now explicitly includes the 'challengeType'.
@@ -220,6 +203,23 @@ public class PaymentController {
                 null,
                 null
             ), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+    
+        @PostMapping("/paystack-webhook")
+    public ResponseEntity<String> handlePaystackWebhook(
+            @RequestHeader("x-paystack-signature") String signature,
+            @RequestBody PaystackWebhookRequest webhookPayload) {
+        try {
+            if (!paymentService.verifyWebhookSignature(webhookPayload, signature)) {
+                return new ResponseEntity<>("Invalid signature", HttpStatus.BAD_REQUEST);
+            }
+
+            paymentService.handlePaystackWebhook(webhookPayload);
+            return new ResponseEntity<>("Webhook received and processed", HttpStatus.OK);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return new ResponseEntity<>("Error processing webhook: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 }
