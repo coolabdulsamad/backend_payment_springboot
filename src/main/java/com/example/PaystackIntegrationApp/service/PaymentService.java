@@ -12,7 +12,7 @@ import com.google.firebase.database.FirebaseDatabase;
 import com.google.firebase.database.ValueEventListener;
 
 import com.google.gson.Gson;
-import com.google.gson.JsonSyntaxException; // Import for JSON parsing error
+import com.google.gson.JsonSyntaxException;
 import com.google.gson.reflect.TypeToken;
 import io.micrometer.common.lang.NonNull;
 import io.micrometer.common.lang.Nullable;
@@ -27,12 +27,13 @@ import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
-import java.util.Base64;
+// Removed Base64 import as we are no longer using it for webhook verification
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Formatter; // Added for hex encoding
 import java.util.function.Consumer;
 
 import org.slf4j.Logger;
@@ -45,7 +46,7 @@ public class PaymentService {
     private static final Logger logger = LoggerFactory.getLogger(PaymentService.class);
 
     @Value("${paystack.secretKey}")
-    private String paystackSecretKey; // This will now be trimmed to ensure no whitespace
+    private String paystackSecretKey; // This is your main Paystack Secret Key (sk_live_...)
 
     private final PaymentMethodRepository paymentMethodRepository;
     private final OkHttpClient httpClient;
@@ -60,14 +61,15 @@ public class PaymentService {
         logger.info("PaymentService constructor initialized with FirebaseDatabase bean.");
     }
 
-    // Ensure the secret key is trimmed after it's injected (Spring will call this after construction)
+    // This method ensures the secret key is trimmed after injection.
+    // This is good practice to remove accidental whitespace.
     @Value("${paystack.secretKey}")
     public void setPaystackSecretKey(String paystackSecretKey) {
-        // Trim any leading/trailing whitespace immediately upon injection
         this.paystackSecretKey = paystackSecretKey.trim();
         logger.info("Paystack Secret Key loaded and trimmed. Length: {}", this.paystackSecretKey.length());
-        logger.info("DEBUG: Paystack Secret Key being used for verification (first 5 chars after trim): {}", this.paystackSecretKey.substring(0, Math.min(this.paystackSecretKey.length(), 5)));
-        // Remove the above DEBUG line once this is working
+        // Temporarily keep this debug line to confirm the key is correctly loaded and trimmed
+        logger.info("DEBUG: Paystack Secret Key being used (first 5 chars after trim): {}", this.paystackSecretKey.substring(0, Math.min(this.paystackSecretKey.length(), 5)));
+        // REMOVE the above DEBUG line in production code for security reasons.
     }
 
 
@@ -109,7 +111,7 @@ public class PaymentService {
 
         Request request = new Request.Builder()
                 .url(url)
-                .header("Authorization", "Bearer " + paystackSecretKey)
+                .header("Authorization", "Bearer " + paystackSecretKey) // Use paystackSecretKey for API calls
                 .build();
 
         try (Response response = httpClient.newCall(request).execute()) {
@@ -149,7 +151,7 @@ public class PaymentService {
 
         Request request = new Request.Builder()
                 .url(url)
-                .header("Authorization", "Bearer " + paystackSecretKey)
+                .header("Authorization", "Bearer " + paystackSecretKey) // Use paystackSecretKey for API calls
                 .post(body)
                 .build();
 
@@ -194,7 +196,7 @@ public class PaymentService {
 
         Request request = new Request.Builder()
                 .url(url)
-                .header("Authorization", "Bearer " + paystackSecretKey)
+                .header("Authorization", "Bearer " + paystackSecretKey) // Use paystackSecretKey for API calls
                 .post(body)
                 .build();
 
@@ -262,7 +264,7 @@ public class PaymentService {
 
         Request request = new Request.Builder()
                 .url(url)
-                .header("Authorization", "Bearer " + paystackSecretKey)
+                .header("Authorization", "Bearer " + paystackSecretKey) // Use paystackSecretKey for API calls
                 .post(body)
                 .build();
 
@@ -334,30 +336,40 @@ public class PaymentService {
      */
     public boolean verifyWebhookSignature(String rawPayload, String signature) {
         try {
-            // Log the secret key being used for verification (with length and trimmed flag)
+            // This debug log shows the key being used. You should remove this in production.
             logger.info("DEBUG: Paystack Secret Key for webhook verification. Length: {}, Trimmed: {}. First 5 chars: {}",
                         paystackSecretKey.length(),
                         paystackSecretKey.equals(paystackSecretKey.trim()),
                         paystackSecretKey.substring(0, Math.min(paystackSecretKey.length(), 5)));
-            // IMPORTANT: Remove the above DEBUG line once this is confirmed working.
+            // REMOVE the above DEBUG line once this is confirmed working.
 
             Mac sha512_HMAC = Mac.getInstance("HmacSHA512");
-            // Use the already trimmed paystackSecretKey
+            // Use the already trimmed paystackSecretKey (which is your main secret key)
             SecretKeySpec secretKeySpec = new SecretKeySpec(paystackSecretKey.getBytes(StandardCharsets.UTF_8), "HmacSHA512");
             sha512_HMAC.init(secretKeySpec);
             byte[] hash = sha512_HMAC.doFinal(rawPayload.getBytes(StandardCharsets.UTF_8));
-            String expectedSignature = Base64.getEncoder().encodeToString(hash); // Paystack's signature is Base64 encoded
+
+            // *** CRITICAL FIX: Convert the byte array to a HEXADECIMAL string ***
+            StringBuilder hexString = new StringBuilder();
+            try (Formatter formatter = new Formatter(hexString)) {
+                for (byte b : hash) {
+                    formatter.format("%02x", b); // %02x ensures two hex characters, with leading zero if needed
+                }
+            }
+            String calculatedSignature = hexString.toString(); // This is the hex-encoded signature
 
             logger.info("Received webhook signature (from header): {}", signature);
-            logger.info("Calculated webhook signature (from raw payload): {}", expectedSignature);
+            logger.info("Calculated webhook signature (from raw payload): {}", calculatedSignature);
 
-            if (!expectedSignature.equals(signature)) {
+            // Paystack sends the hex signature as lowercase, but comparing case-insensitively is robust.
+            if (!calculatedSignature.equalsIgnoreCase(signature)) {
                 logger.error("WEBHOOK SIGNATURE MISMATCH! Calculated vs. Received. This is critical.");
                 logger.error("Raw Payload: {}", rawPayload);
                 return false;
             }
             logger.info("Webhook signature verified successfully.");
             return true;
+
         } catch (NoSuchAlgorithmException | InvalidKeyException e) {
             logger.error("Error during webhook signature verification: {}", e.getMessage(), e);
             return false;
@@ -389,6 +401,7 @@ public class PaymentService {
 
         final String finalOrderFirebaseKey = orderFirebaseKey;
 
+        // Using a Firebase listener for a one-time read
         findUserIdByOrderKey(finalOrderFirebaseKey, (userIdFound) -> {
             if (userIdFound != null) {
                 DatabaseReference orderStatusRef = firebaseDatabase.getReference("Users")
@@ -398,13 +411,13 @@ public class PaymentService {
                         .child("status");
 
                 String newOrderStatus;
-                // Check for 'success' status explicitly in data, or 'charge.success' event
+                // Determine new status based on webhook event and data status
                 if ("charge.success".equalsIgnoreCase(event) || "success".equalsIgnoreCase(statusFromWebhook)) {
                     newOrderStatus = "Confirmed";
                 } else if ("charge.failed".equalsIgnoreCase(event) || "transfer.failed".equalsIgnoreCase(event) || "failed".equalsIgnoreCase(statusFromWebhook) || "reversed".equalsIgnoreCase(statusFromWebhook)) {
                     newOrderStatus = "Payment Failed";
                 } else {
-                    newOrderStatus = "Payment Pending";
+                    newOrderStatus = "Payment Pending"; // Default or other statuses
                 }
 
                 logger.info("Attempting to update Firebase order {} status to: {}", finalOrderFirebaseKey, newOrderStatus);
