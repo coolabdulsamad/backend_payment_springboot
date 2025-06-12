@@ -376,7 +376,8 @@ public class PaymentService {
         }
     }
 
-    // Moved the Firebase update logic into a separate method now called by processPaystackWebhook
+//    // In PaymentService.java, replace your existing handlePaystackWebhook method with this:
+
     public void handlePaystackWebhook(PaystackWebhookRequest webhookPayload) {
         String event = webhookPayload.event;
         Map<String, Object> data = webhookPayload.data;
@@ -386,16 +387,26 @@ public class PaymentService {
         Map<String, Object> customerData = (Map<String, Object>) data.get("customer");
         String customerEmail = (customerData != null) ? (String) customerData.get("email") : "unknown@example.com";
 
-        Map<String, Object> metadata = (Map<String, Object>) data.get("metadata");
         String orderFirebaseKey = null;
-        if (metadata != null) {
-            orderFirebaseKey = (String) metadata.get("order_firebase_key");
+
+        // --- FIX STARTS HERE ---
+        Object metadataObj = data.get("metadata"); // Get as Object first
+
+        if (metadataObj instanceof Map) { // Check if it's actually a Map
+            Map<String, Object> metadata = (Map<String, Object>) metadataObj; // Safely cast
+            if (metadata != null) { // Check if the map itself is not null (though instanceof already implies it)
+                orderFirebaseKey = (String) metadata.get("order_firebase_key");
+            }
+        } else if (metadataObj != null) {
+            // Log if metadata is not a Map, but not null (e.g., it's a Double, String, etc.)
+            logger.warn("Webhook 'metadata' field is not a Map. Actual type: {}. Value: {}", metadataObj.getClass().getName(), metadataObj);
         }
+        // --- FIX ENDS HERE ---
 
         logger.info("Processing Paystack webhook (parsed): Event={}, Reference={}, Status={}, OrderFirebaseKey={}, CustomerEmail={}", event, transactionReference, statusFromWebhook, orderFirebaseKey, customerEmail);
 
         if (orderFirebaseKey == null) {
-            logger.warn("Webhook received without 'order_firebase_key' in metadata. Cannot update Firebase order. Reference: {}", transactionReference);
+            logger.warn("Webhook received without valid 'order_firebase_key' in metadata or metadata was not a Map. Cannot update Firebase order. Reference: {}", transactionReference);
             return;
         }
 
